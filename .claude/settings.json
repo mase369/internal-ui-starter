@@ -1,0 +1,51 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(**/CLAUDE.md)",
+      "Write(**/CLAUDE.md)",
+      "Edit(**/.clauderules)",
+      "Write(**/.clauderules)",
+      "Edit(**/tailwind.config.ts)",
+      "Write(**/tailwind.config.ts)",
+      "Edit(**/components.json)",
+      "Write(**/components.json)",
+      "Edit(**/tsconfig.json)",
+      "Write(**/tsconfig.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/protect-governance.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-on-write.js"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/auto-commit.js"
+          }
+        ]
+      }
+    ]
+  }
+}

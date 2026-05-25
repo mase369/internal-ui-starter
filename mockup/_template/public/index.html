@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mockup UI</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    body { font-family: 'Meiryo', sans-serif; margin: 0; background: #f5f6fa; color: #1a1a2e; }
+    header { background: #0f3460; color: #fff; padding: 16px 24px; font-size: 18px; font-weight: bold; }
+    .container { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+    .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+    select, button { padding: 8px 16px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 14px; }
+    button { background: #0f3460; color: #fff; border: none; cursor: pointer; }
+    button:hover { background: #16213e; }
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); padding: 20px; margin-bottom: 20px; }
+    canvas { max-height: 360px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead { background: #0f3460; color: #fff; }
+    th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+    tr:hover td { background: #f0f4ff; }
+    .status { color: #64748b; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header id="app-title">mockup UI</header>
+  <div class="container">
+    <div class="controls">
+      <label for="file-select">CSVファイル：</label>
+      <select id="file-select"><option>読み込み中...</option></select>
+      <button onclick="loadCSV()">読み込む</button>
+      <span class="status" id="status"></span>
+    </div>
+    <div class="card">
+      <canvas id="chart"></canvas>
+    </div>
+    <div class="card">
+      <div id="table-container">CSVを選択して「読み込む」を押してください。</div>
+    </div>
+  </div>
+
+  <script>
+    let chartInstance = null;
+
+    async function init() {
+      const res = await fetch("/api/files");
+      const files = await res.json();
+      const sel = document.getElementById("file-select");
+      if (files.length === 0) {
+        sel.innerHTML = "<option>data/ にCSVファイルを配置してください</option>";
+        return;
+      }
+      sel.innerHTML = files.map(f => `<option value="${f}">${f}</option>`).join("");
+    }
+
+    async function loadCSV() {
+      const filename = document.getElementById("file-select").value;
+      document.getElementById("status").textContent = "読み込み中...";
+      const res = await fetch(`/api/csv/${encodeURIComponent(filename)}`);
+      const data = await res.json();
+      if (data.error) { document.getElementById("status").textContent = data.error; return; }
+      document.getElementById("status").textContent = `${data.length} 行読み込みました`;
+      renderTable(data);
+      renderChart(data);
+    }
+
+    function renderTable(data) {
+      if (!data.length) return;
+      const cols = Object.keys(data[0]);
+      const thead = `<thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead>`;
+      const tbody = `<tbody>${data.slice(0, 200).map(row =>
+        `<tr>${cols.map(c => `<td>${row[c] ?? ""}</td>`).join("")}</tr>`
+      ).join("")}</tbody>`;
+      document.getElementById("table-container").innerHTML = `<table>${thead}${tbody}</table>`;
+    }
+
+    function renderChart(data) {
+      if (!data.length) return;
+      const cols = Object.keys(data[0]);
+      const labelCol = cols[0];
+      const valueCol = cols.find(c => !isNaN(parseFloat(data[0][c]))) || cols[1];
+      if (!valueCol) return;
+
+      const labels = data.slice(0, 50).map(r => r[labelCol]);
+      const values = data.slice(0, 50).map(r => parseFloat(r[valueCol]) || 0);
+
+      if (chartInstance) chartInstance.destroy();
+      chartInstance = new Chart(document.getElementById("chart"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{ label: valueCol, data: values, backgroundColor: "#0f3460cc" }]
+        },
+        options: { responsive: true, plugins: { legend: { position: "top" } } }
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>
