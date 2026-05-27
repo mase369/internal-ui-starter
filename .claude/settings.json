@@ -10,7 +10,11 @@
       "Edit(**/components.json)",
       "Write(**/components.json)",
       "Edit(**/tsconfig.json)",
-      "Write(**/tsconfig.json)"
+      "Write(**/tsconfig.json)",
+      "Edit(.claude/commands/**)",
+      "Write(.claude/commands/**)",
+      "Edit(.claude/agents/**)",
+      "Write(.claude/agents/**)"
     ]
   },
   "hooks": {
