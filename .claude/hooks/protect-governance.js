@@ -9,6 +9,8 @@ const PROTECTED = [
   /official[/\\][^/\\]+[/\\]tailwind\.config\.ts$/,
   /official[/\\][^/\\]+[/\\]tsconfig\.json$/,
   /official[/\\]HANDOVER\.md$/,
+  /\.claude[/\\]settings\.json$/,
+  /\.claude[/\\]hooks[/\\].+\.js$/,
   // スキル・エージェント定義（セキュリティ審査が必要）
   /\.claude[/\\]commands[/\\].+\.md$/,
   /\.claude[/\\]agents[/\\].+\.md$/,
@@ -30,19 +32,21 @@ process.stdin.on("end", () => {
   const blocked = PROTECTED.some((pattern) => pattern.test(normalized));
 
   if (blocked) {
-    const isSkillOrAgent =
-      /\.claude[/\\](commands|agents)[/\\]/.test(normalized);
+    const isHarnessFile =
+      /\.claude[/\\](commands|agents|hooks)[/\\]/.test(normalized) ||
+      /\.claude[/\\]settings\.json$/.test(normalized);
     console.error("─────────────────────────────────────────────");
     console.error("[ガバナンスファイル保護] 書き込みをブロックしました");
     console.error(`対象: ${filePath}`);
     console.error("");
-    if (isSkillOrAgent) {
-      console.error("スキル・エージェントファイルはセキュリティ審査が必要です。");
+    if (isHarnessFile) {
+      console.error("ハーネス・スキル・エージェントファイルはセキュリティ審査が必要です。");
       console.error("追加・変更の際は以下を確認してください:");
       console.error("  1. 外部通信（curl/fetch/http）の指示が含まれていないか");
       console.error("  2. ファイル削除・破壊的操作の指示が含まれていないか");
       console.error("  3. CLAUDE.md など既存ルールを無効化する指示がないか");
-      console.error("  4. agents/ の tools: に Bash など実行系ツールがないか");
+      console.error("  4. hooks/ や settings.json で保護機構を弱めていないか");
+      console.error("  5. agents/ の tools: に Bash など実行系ツールがないか");
     } else {
       console.error("このファイルはコンポーネントレビュアーのレビューとPRが必要です。");
     }

@@ -26,8 +26,16 @@ const RULES = [
     message: "console.log の残留",
   },
   {
+    pattern: /\bdebugger\b/g,
+    message: "debugger ステートメントの残留",
+  },
+  {
     pattern: /\bvar\s+[a-zA-Z_$][\w$]*/g,
     message: "var による変数宣言（const または let を使用してください）",
+  },
+  {
+    pattern: /\bexport\s+let\b/g,
+    message: "export let の使用（可変な export は禁止）",
   },
   {
     pattern: /\bconst\s+enum\b/g,
@@ -44,8 +52,28 @@ const RULES = [
   {
     pattern: /\bnew\s+Function\(/g,
     message: "new Function() の使用（セキュリティリスク）",
-  }
+  },
+  {
+    pattern: /catch\s*\(\s*[a-zA-Z_$][\w$]*\s*:\s*any\s*\)/g,
+    message: "catch (e: any) の使用 → catch (e: unknown) にしてください",
+  },
 ];
+
+function pushLineViolations(violations, content, regex, message) {
+  const lines = content.split(/\r?\n/);
+  const lineNumbers = [];
+
+  lines.forEach((line, index) => {
+    if (regex.test(line)) {
+      lineNumbers.push(index + 1);
+    }
+    regex.lastIndex = 0;
+  });
+
+  if (lineNumbers.length > 0) {
+    violations.push(`${message}（${lineNumbers.length}箇所: ${lineNumbers.join(", ")}行目）`);
+  }
+}
 
 function checkFile(filePath) {
   if (!fs.existsSync(filePath)) return [];
@@ -76,6 +104,40 @@ function checkFile(filePath) {
   if (relativeMatches.length > 0) {
     violations.push(`エイリアスパス (@/...) を使用してください。相対パスによるインポートは禁止されています（${relativeMatches.length}箇所）`);
   }
+
+  // 4. ルール文書にある追加規約の軽量チェック
+  const equalityLines = [];
+  content.split(/\r?\n/).forEach((line, index) => {
+    const withoutAllowedNullChecks = line
+      .replace(/[a-zA-Z_$][\w$.[\]?]*\s*==\s*null/g, "")
+      .replace(/null\s*==\s*[a-zA-Z_$][\w$.[\]?]*/g, "")
+      .replace(/[a-zA-Z_$][\w$.[\]?]*\s*!=\s*null/g, "")
+      .replace(/null\s*!=\s*[a-zA-Z_$][\w$.[\]?]*/g, "");
+    if (/(?:^|[^=!])==(?:[^=]|$)|!=(?:[^=]|$)/.test(withoutAllowedNullChecks)) {
+      equalityLines.push(index + 1);
+    }
+  });
+  if (equalityLines.length > 0) {
+    violations.push(`等価比較は === / !== を使用してください（${equalityLines.length}箇所: ${equalityLines.join(", ")}行目）`);
+  }
+  pushLineViolations(
+    violations,
+    content,
+    /\bimport\s+\{[^}]*\b[A-Z][A-Za-z0-9_]*(?:Props|Type|Data|Config|Options|Params|Result|Response)\b[^}]*\}\s+from\s+['"]/g,
+    "型のみ import は import type を使用してください"
+  );
+  pushLineViolations(
+    violations,
+    content,
+    /\bconst\s+[a-zA-Z_$][\w$]*\s*=\s*\{[^;]*\}\s+as\s+[A-Z][A-Za-z0-9_]*/g,
+    "オブジェクトリテラルは as Foo ではなく : Foo で型指定してください"
+  );
+  pushLineViolations(
+    violations,
+    content,
+    /\bthrow\s+(?!new\s+Error\s*\()/g,
+    "throw は new Error(...) を使用してください"
+  );
 
   return violations;
 }

@@ -1,5 +1,9 @@
 {
   "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem D:\\\\UI\\\\official\\\\starter-kit -Recurse -Depth 3 | Where-Object {!$_.PSIsContainer} | Select-Object -First 40 | ForEach-Object { $_.FullName.Replace\\('D:\\\\UI\\\\official\\\\starter-kit\\\\',''\\) })",
+      "PowerShell(Get-ChildItem D:\\\\UI\\\\official\\\\photoback-campaign -Recurse | Where-Object {!$_.PSIsContainer} | ForEach-Object { $_.FullName.Replace\\('D:\\\\UI\\\\official\\\\photoback-campaign\\\\',''\\) } | Sort-Object)"
+    ],
     "deny": [
       "Edit(**/CLAUDE.md)",
       "Write(**/CLAUDE.md)",
@@ -11,6 +15,10 @@
       "Write(**/components.json)",
       "Edit(**/tsconfig.json)",
       "Write(**/tsconfig.json)",
+      "Edit(.claude/settings.json)",
+      "Write(.claude/settings.json)",
+      "Edit(.claude/hooks/**)",
+      "Write(.claude/hooks/**)",
       "Edit(.claude/commands/**)",
       "Write(.claude/commands/**)",
       "Edit(.claude/agents/**)",

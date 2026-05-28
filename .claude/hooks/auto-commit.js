@@ -12,22 +12,46 @@ function run(cmd, cwd = ROOT) {
   return spawnSync(cmd, { shell: true, cwd, encoding: "utf8" });
 }
 
-function getChangedOfficialFiles() {
-  const r1 = run("git diff --name-only");
-  const r2 = run("git diff --cached --name-only");
-  if (r1.error) return null; // git 未初期化
-  return [
-    ...(r1.stdout || "").split("\n"),
-    ...(r2.stdout || "").split("\n"),
-  ]
-    .map((f) => f.trim())
-    .filter((f) => f.startsWith("official/") && /\.(tsx?|jsx?)$/.test(f))
-    .filter((v, i, a) => a.indexOf(v) === i); // dedupe
+function runArgs(command, args, cwd = ROOT) {
+  return spawnSync(command, args, { cwd, encoding: "utf8" });
 }
 
-function detectProject(files) {
-  const m = files[0]?.match(/^official\/([^/]+)\//);
-  return m ? m[1] : null;
+function lines(stdout) {
+  return (stdout || "")
+    .split("\n")
+    .map((f) => f.trim())
+    .filter(Boolean);
+}
+
+function unique(values) {
+  return values.filter((value, index, array) => array.indexOf(value) === index);
+}
+
+function getChangedOfficialFiles() {
+  const unstaged = run("git diff --name-only");
+  const staged = run("git diff --cached --name-only");
+  const untracked = run("git ls-files --others --exclude-standard official/");
+  if (unstaged.error || staged.error || untracked.error) return null; // git 未初期化
+
+  return unique([
+    ...lines(unstaged.stdout),
+    ...lines(staged.stdout),
+    ...lines(untracked.stdout),
+  ]).filter((f) => f.startsWith("official/"));
+}
+
+function detectSingleProject(files) {
+  const projects = unique(
+    files
+      .map((f) => f.match(/^official\/([^/]+)\//)?.[1])
+      .filter(Boolean)
+  );
+
+  if (projects.length !== 1) {
+    return { projectName: null, projects };
+  }
+
+  return { projectName: projects[0], projects };
 }
 
 function branchName(projectName) {
@@ -35,21 +59,39 @@ function branchName(projectName) {
   return `feature/${projectName}-${date}`;
 }
 
+function readPackage(projectDir) {
+  const packagePath = path.join(projectDir, "package.json");
+  if (!fs.existsSync(packagePath)) return null;
+
+  try {
+    return JSON.parse(fs.readFileSync(packagePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function scriptCommand(packageJson, preferred, fallback) {
+  return packageJson?.scripts?.[preferred] ? `npm run ${preferred}` : fallback;
+}
+
 function autoCommit(projectName, changedFiles) {
   const branch = branchName(projectName);
 
   // ブランチが存在しなければ作成、あれば切り替え
-  const exists = run(`git rev-parse --verify ${branch}`);
+  const exists = runArgs("git", ["rev-parse", "--verify", branch]);
   if (exists.status !== 0) {
-    run(`git checkout -b ${branch}`);
+    runArgs("git", ["checkout", "-b", branch]);
   } else {
-    run(`git checkout ${branch}`);
+    runArgs("git", ["checkout", branch]);
   }
 
-  run("git add official/");
+  const addResult = runArgs("git", ["add", "--", ...changedFiles]);
+  if (addResult.status !== 0) {
+    return addResult;
+  }
 
   const ts = new Date().toLocaleString("ja-JP", { hour12: false });
-  
+
   // 変更ファイル一覧を含めた詳細なコミットメッセージを作成
   const subject = `feat(${projectName}): AI生成コード 自動コミット [${ts}]`;
   const body = `Changed files:\n${changedFiles.map((f) => `- ${f}`).join("\n")}`;
@@ -59,13 +101,13 @@ function autoCommit(projectName, changedFiles) {
   const tempMsgFile = path.join(ROOT, ".git-commit-msg-tmp.txt");
   fs.writeFileSync(tempMsgFile, commitMsg, "utf8");
 
-  const commitResult = run(`git commit -F "${tempMsgFile}"`);
-  
+  const commitResult = runArgs("git", ["commit", "-F", tempMsgFile]);
+
   // 一時ファイルのクリーンアップ
   if (fs.existsSync(tempMsgFile)) {
     try {
       fs.unlinkSync(tempMsgFile);
-    } catch (e) {
+    } catch {
       // ignore
     }
   }
@@ -89,21 +131,33 @@ process.stdin.on("end", () => {
     process.exit(0); // official/ に変更なし → 何もしない
   }
 
-  const projectName = detectProject(changedFiles);
-  if (!projectName) { process.exit(0); }
+  const { projectName, projects } = detectSingleProject(changedFiles);
+  const SEP = "─".repeat(52);
+  if (!projectName) {
+    console.log(`\n${SEP}`);
+    console.log("❌ チェック失敗 — 複数の official プロジェクト変更が混在しています:");
+    console.log(projects.length > 0 ? projects.map((p) => `  • ${p}`).join("\n") : "  • 判定不能");
+    console.log("プロジェクト単位で分けて作業・コミットしてください。");
+    process.exit(1);
+  }
 
   const projectDir = path.join(ROOT, "official", projectName);
   if (!fs.existsSync(projectDir)) { process.exit(0); }
 
-  const SEP = "─".repeat(52);
   console.log(`\n${SEP}`);
   console.log(`[自動チェック] ${projectName}（${changedFiles.length} ファイル）`);
   console.log(SEP);
 
   const errors = [];
+  const codeFiles = changedFiles.filter((f) => /\.(tsx?|jsx?)$/.test(f));
+
+  if (!fs.existsSync(path.join(projectDir, "CLAUDE.md"))) {
+    errors.push("\n[Project rules]");
+    errors.push(`official/${projectName}/CLAUDE.md がありません。starter-kit からコピーしてください。`);
+  }
 
   // 1. .clauderules 準拠チェック
-  changedFiles.forEach((f) => {
+  codeFiles.forEach((f) => {
     const violations = checkFile(path.join(ROOT, f));
     if (violations.length > 0) {
       errors.push(`\n[.clauderules] ${f}`);
@@ -111,30 +165,36 @@ process.stdin.on("end", () => {
     }
   });
 
-  // 2. TypeScript チェック
-  if (fs.existsSync(path.join(projectDir, "node_modules"))) {
-    process.stdout.write("TypeScript チェック中... ");
-    const tsc = run("npm run type-check", projectDir);
-    if (tsc.status !== 0) {
-      process.stdout.write("❌\n");
-      errors.push("\n[TypeScript]");
-      errors.push((tsc.stdout + tsc.stderr).trim().slice(0, 800));
+  if (!fs.existsSync(path.join(projectDir, "node_modules"))) {
+    errors.push("\n[Dependencies]");
+    errors.push("node_modules がないため TypeScript / ESLint チェックを実行できません。npm install 後に再実行してください。");
+  } else {
+    const packageJson = readPackage(projectDir);
+    if (!packageJson) {
+      errors.push("\n[package.json]");
+      errors.push("package.json を読み込めません。");
     } else {
-      process.stdout.write("✅\n");
-    }
-  }
+      // 2. TypeScript チェック
+      process.stdout.write("TypeScript チェック中... ");
+      const tsc = run(scriptCommand(packageJson, "type-check", "npm run type-check"), projectDir);
+      if (tsc.status !== 0) {
+        process.stdout.write("❌\n");
+        errors.push("\n[TypeScript]");
+        errors.push((tsc.stdout + tsc.stderr).trim().slice(0, 1200));
+      } else {
+        process.stdout.write("✅\n");
+      }
 
-  // 3. ESLint チェック
-  const nextBin = path.join(projectDir, "node_modules", ".bin", "next");
-  if (fs.existsSync(nextBin)) {
-    process.stdout.write("ESLint チェック中... ");
-    const lint = run("npm run lint -- --max-warnings=0", projectDir);
-    if (lint.status !== 0) {
-      process.stdout.write("❌\n");
-      errors.push("\n[ESLint]");
-      errors.push((lint.stdout + lint.stderr).trim().slice(0, 800));
-    } else {
-      process.stdout.write("✅\n");
+      // 3. ESLint チェック
+      process.stdout.write("ESLint チェック中... ");
+      const lint = run(scriptCommand(packageJson, "lint:strict", "npm run lint -- --max-warnings=0"), projectDir);
+      if (lint.status !== 0) {
+        process.stdout.write("❌\n");
+        errors.push("\n[ESLint]");
+        errors.push((lint.stdout + lint.stderr).trim().slice(0, 1200));
+      } else {
+        process.stdout.write("✅\n");
+      }
     }
   }
 
@@ -157,7 +217,7 @@ process.stdin.on("end", () => {
     console.log("コミット対象の変更がありませんでした（既にステージ済みの可能性）");
   } else {
     console.log("コミット中にエラーが発生しました:");
-    console.log(result.stderr);
+    console.log(result.stderr || result.stdout);
   }
 
   process.exit(0);
